@@ -91,6 +91,20 @@
 pytest tests
 ```
 
+## W&B Logging
+1. 安装：`pip install -r requirements.txt`（其中已包含 `wandb>=0.15.0`）。
+2. 如果要使用 online 模式，先执行 `wandb login` 并输入 API Key；offline/disabled 模式不需要联网。
+3. 使用示例：
+   ```bash
+   python train.py configs/full_attnres_toy.yaml --model_type full_attnres_llama \
+     --wandb_mode offline --wandb_project attention_residuals --wandb_run_name depth-stats
+   ```
+4. `--wandb_mode` 可选：
+   - `disabled`：完全不初始化 W&B（默认），仅保留 console 日志；
+   - `offline`：在本地 `wandb/` 目录记录，之后可用 `wandb sync wandb/offline-run-*/` 上传；
+   - `online`：实时上传到 W&B，需要登录。
+5. 已记录的指标包括 `train/loss`、`train/depth_mean`、`train/depth_entropy`、`train/depth_weight_count`（若开启 HF stats）、`train/learning_rate`、`train/step`，底层 console 仍然输出 `loss` + `depth_mean`，保证现有监控不变。
+
 ## 扩展到更大模型
 1. 将 `configs/xxx.yaml` 中的 `model` 部分替换为更大的 `embed_dim` / `num_layers`，并根据数据集切换 `dataset.text_file`。
 2. 使用 `utils.metrics.hidden_norms` / `grad_norms` / `depth_attention_mean` 收集每层指标。

@@ -3,3 +3,4 @@ pyyaml
 pytest
 numpy
 transformers>=5.0.0
+wandb>=0.15.0

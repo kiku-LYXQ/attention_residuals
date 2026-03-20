@@ -108,11 +108,19 @@ def build_model(model_config: Dict, model_type: str | None = None) -> torch.nn.M
             raise ValueError(f"Unknown model mode {mode}")
 
 
-def train(config_path: pathlib.Path, model_type: str | None = None) -> None:
+def train(
+    config_path: pathlib.Path,
+    model_type: str | None = None,
+    wandb_mode: str = "disabled",
+    wandb_project: str = "attention_residuals",
+    wandb_run_name: str | None = None,
+    wandb_entity: str | None = None,
+) -> None:
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
     configure_logging(config.get("log_level", logging.INFO))
     device = torch.device(config.get("device", "cpu"))
+    model_mode = model_type or config["model"]["mode"]
     model = build_model(config["model"], model_type).to(device)
     lr = float(config.get("lr", 5e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
@@ -128,6 +136,28 @@ def train(config_path: pathlib.Path, model_type: str | None = None) -> None:
     logging.info("Starting training for %d steps", config["trainer"]["steps"])
     total_steps = config["trainer"]["steps"]
     loader_iter = iter(loader)
+    wandb_run = None
+    if wandb_mode != "disabled":
+        try:
+            import wandb
+
+            wandb_config = {
+                "model": config["model"],
+                "trainer": config.get("trainer", {}),
+                "lr": lr,
+                "seed": config.get("seed", 42),
+                "model_type": model_mode,
+            }
+            wandb_run = wandb.init(
+                project=wandb_project,
+                name=wandb_run_name,
+                entity=wandb_entity,
+                mode=wandb_mode,
+                config=wandb_config,
+            )
+        except Exception as exc:
+            logging.warning("W&B initialization failed (%s), continuing without W&B", exc)
+            wandb_run = None
     for step in range(1, total_steps + 1):
         try:
             batch = next(loader_iter)
@@ -157,14 +187,34 @@ def train(config_path: pathlib.Path, model_type: str | None = None) -> None:
         loss.backward()
         optimizer.step()
         depth_mean = None
-        if stats and "attn_depth_weights" in stats:
-            depth_mean = depth_attention_mean(stats["attn_depth_weights"]).mean().item()
+        depth_entropy = None
+        attn_weights = None
+        if stats:
+            depth_entropy = stats.get("depth_entropy")
+            attn_weights = stats.get("attn_depth_weights")
+            if attn_weights:
+                depth_mean = depth_attention_mean(attn_weights).mean().item()
         logging.info(
             "step=%d loss=%.4f depth_mean=%.4f",
             step,
             loss.item(),
             depth_mean if depth_mean is not None else 0.0,
         )
+        if wandb_run:
+            metrics = {
+                "train/loss": loss.item(),
+                "train/step": step,
+                "train/learning_rate": optimizer.param_groups[0]["lr"],
+            }
+            if depth_mean is not None:
+                metrics["train/depth_mean"] = depth_mean
+            if depth_entropy is not None:
+                metrics["train/depth_entropy"] = depth_entropy
+            if attn_weights:
+                metrics["train/depth_weight_count"] = sum(w.numel() for w in attn_weights)
+            wandb_run.log(metrics, step=step)
+    if wandb_run:
+        wandb_run.finish()
 
 
 def main() -> None:
@@ -184,8 +234,40 @@ def main() -> None:
         default=None,
         help="Model type override",
     )
+    parser.add_argument(
+        "--wandb_mode",
+        type=str,
+        choices=["disabled", "offline", "online"],
+        default="disabled",
+        help="Weight & Biases logging mode",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="attention_residuals",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        default=None,
+        help="W&B run name",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default=None,
+        help="W&B entity/username",
+    )
     args = parser.parse_args()
-    train(args.config, args.model_type)
+    train(
+        args.config,
+        args.model_type,
+        wandb_mode=args.wandb_mode,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run_name,
+        wandb_entity=args.wandb_entity,
+    )
 
 
 if __name__ == "__main__":
