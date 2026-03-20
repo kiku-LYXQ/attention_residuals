@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from attnres_repro.models.attnres import BlockDepthAttnResidual, BlockState, DepthAttnResidual
+from models.attnres import BlockDepthAttnResidual, BlockState, DepthAttnResidual
 
 
 def _make_seq(batch: int = 2, seq_len: int = 4, dim: int = 16):

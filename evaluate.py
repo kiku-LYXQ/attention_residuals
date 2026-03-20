@@ -8,10 +8,10 @@ from typing import Dict, Optional
 import torch
 from torch.utils.data import DataLoader
 
-from attnres_repro.train import ToyTokenDataset, build_model, load_config
-from attnres_repro.utils.logging_utils import configure_logging
-from attnres_repro.utils.metrics import depth_attention_mean, grad_norms, hidden_norms
-from attnres_repro.utils.seed import set_seed
+from train import ToyTokenDataset, build_model, load_config
+from utils.logging_utils import configure_logging
+from utils.metrics import depth_attention_mean, grad_norms, hidden_norms
+from utils.seed import set_seed
 
 
 def evaluate(config_path: pathlib.Path) -> None:

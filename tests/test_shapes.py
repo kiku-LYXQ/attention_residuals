@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from attnres_repro.models.transformer import (
+from models.transformer import (
     BaselineTransformer,
     BlockAttnResTransformer,
     FullAttnResTransformer,

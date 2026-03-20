@@ -9,14 +9,14 @@ import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
 
-from attnres_repro.models.transformer import (
+from models.transformer import (
     BaselineTransformer,
     BlockAttnResTransformer,
     FullAttnResTransformer,
 )
-from attnres_repro.utils.logging_utils import configure_logging
-from attnres_repro.utils.metrics import depth_attention_mean
-from attnres_repro.utils.seed import set_seed
+from utils.logging_utils import configure_logging
+from utils.metrics import depth_attention_mean
+from utils.seed import set_seed
 
 
 class ToyTokenDataset(Dataset):
