@@ -30,6 +30,7 @@ class FullAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layer_idx = layer_idx
 
     def forward(
         self,
@@ -44,7 +45,7 @@ class FullAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         state: FullAttnResState,
         **kwargs,
     ) -> Tensor:
-        attn_input, _ = adapter.before_attention(state)
+        attn_input, _ = adapter.before_attention(state, layer_idx=self.layer_idx)
         hidden_states = self.input_layernorm(attn_input)
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -59,7 +60,7 @@ class FullAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         hidden_states = attn_input + hidden_states
         adapter.append_history(state, hidden_states)
 
-        mlp_input, _ = adapter.before_mlp(state)
+        mlp_input, _ = adapter.before_mlp(state, layer_idx=self.layer_idx)
         hidden_states = self.post_attention_layernorm(mlp_input)
         hidden_states = self.mlp(hidden_states)
         hidden_states = mlp_input + hidden_states
@@ -75,6 +76,7 @@ class BlockAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         self.mlp = LlamaMLP(config)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layer_idx = layer_idx
 
     def forward(
         self,
@@ -89,7 +91,7 @@ class BlockAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         state: BlockAttnResState,
         **kwargs,
     ) -> Tensor:
-        attn_input, _ = adapter.before_attention(state)
+        attn_input, _ = adapter.before_attention(state, layer_idx=self.layer_idx)
         hidden_states = self.input_layernorm(attn_input)
         hidden_states, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -104,7 +106,7 @@ class BlockAttnResLlamaDecoderLayer(GradientCheckpointingLayer):
         hidden_states = attn_input + hidden_states
         adapter.update_partial(state, hidden_states)
 
-        mlp_input, _ = adapter.before_mlp(state)
+        mlp_input, _ = adapter.before_mlp(state, layer_idx=self.layer_idx)
         hidden_states = self.post_attention_layernorm(mlp_input)
         hidden_states = self.mlp(hidden_states)
         hidden_states = mlp_input + hidden_states

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import pathlib
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 import yaml
@@ -137,6 +137,7 @@ def train(
     total_steps = config["trainer"]["steps"]
     loader_iter = iter(loader)
     wandb_run = None
+    wandb_module: Any | None = None
     if wandb_mode != "disabled":
         try:
             import wandb
@@ -153,8 +154,10 @@ def train(
                 name=wandb_run_name,
                 entity=wandb_entity,
                 mode=wandb_mode,
+                tags=[model_mode],
                 config=wandb_config,
             )
+            wandb_module = wandb
         except Exception as exc:
             logging.warning("W&B initialization failed (%s), continuing without W&B", exc)
             wandb_run = None
@@ -189,9 +192,11 @@ def train(
         depth_mean = None
         depth_entropy = None
         attn_weights = None
+        per_layer = {"means": {}, "entropies": {}}
         if stats:
             depth_entropy = stats.get("depth_entropy")
             attn_weights = stats.get("attn_depth_weights")
+            per_layer = stats.get("per_layer", per_layer)
             if attn_weights:
                 depth_mean = depth_attention_mean(attn_weights).mean().item()
         logging.info(
@@ -212,6 +217,16 @@ def train(
                 metrics["train/depth_entropy"] = depth_entropy
             if attn_weights:
                 metrics["train/depth_weight_count"] = sum(w.numel() for w in attn_weights)
+            if wandb_module and attn_weights:
+                flat = torch.cat([w.flatten() for w in attn_weights]).numpy().tolist()
+                metrics["train/depth_weights_hist"] = wandb_module.Histogram(flat)
+            depth_entropy_values = stats.get("depth_entropy_values") if stats else []
+            if wandb_module and depth_entropy_values:
+                metrics["train/depth_entropy_hist"] = wandb_module.Histogram(depth_entropy_values)
+            for layer_idx, mean_val in per_layer.get("means", {}).items():
+                metrics[f"train/depth_mean_layer_{layer_idx}"] = mean_val
+            for layer_idx, entropy_val in per_layer.get("entropies", {}).items():
+                metrics[f"train/depth_entropy_layer_{layer_idx}"] = entropy_val
             wandb_run.log(metrics, step=step)
     if wandb_run:
         wandb_run.finish()

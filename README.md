@@ -103,7 +103,7 @@ pytest tests
    - `disabled`：完全不初始化 W&B（默认），仅保留 console 日志；
    - `offline`：在本地 `wandb/` 目录记录，之后可用 `wandb sync wandb/offline-run-*/` 上传；
    - `online`：实时上传到 W&B，需要登录。
-5. 已记录的指标包括 `train/loss`、`train/depth_mean`、`train/depth_entropy`、`train/depth_weight_count`（若开启 HF stats）、`train/learning_rate`、`train/step`，底层 console 仍然输出 `loss` + `depth_mean`，保证现有监控不变。
+5. 已记录的指标包括 `train/loss`、`train/depth_mean`、`train/depth_entropy`、`train/depth_weight_count`、`train/depth_mean_layer_i`（每层聚合）、`train/depth_entropy_layer_i`、`train/depth_weights_hist`、`train/depth_entropy_hist`、`train/learning_rate`、`train/step`，底层 console 仍然输出 `loss` + `depth_mean`，保证现有监控不变。
 
 ## 扩展到更大模型
 1. 将 `configs/xxx.yaml` 中的 `model` 部分替换为更大的 `embed_dim` / `num_layers`，并根据数据集切换 `dataset.text_file`。

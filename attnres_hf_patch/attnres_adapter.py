@@ -15,14 +15,14 @@ class FullAttnResAdapter(nn.Module):
         self.attn_res = DepthAttnResidual(dim)
         self.mlp_res = DepthAttnResidual(dim)
 
-    def before_attention(self, state: FullAttnResState) -> Tuple[Tensor, Tensor]:
+    def before_attention(self, state: FullAttnResState, layer_idx: int | None = None) -> Tuple[Tensor, Tensor]:
         out, weights = self.attn_res(state.history)
-        state.stats.add(weights)
+        state.stats.add(weights, layer_idx)
         return out, weights
 
-    def before_mlp(self, state: FullAttnResState) -> Tuple[Tensor, Tensor]:
+    def before_mlp(self, state: FullAttnResState, layer_idx: int | None = None) -> Tuple[Tensor, Tensor]:
         out, weights = self.mlp_res(state.history)
-        state.stats.add(weights)
+        state.stats.add(weights, layer_idx)
         return out, weights
 
     @staticmethod
@@ -38,14 +38,14 @@ class BlockAttnResAdapter(nn.Module):
     def _current_state(self, state: BlockAttnResState) -> BlockState:
         return BlockState(blocks=list(state.blocks), partial_block=state.partial_block)
 
-    def before_attention(self, state: BlockAttnResState) -> Tuple[Tensor, Tensor]:
+    def before_attention(self, state: BlockAttnResState, layer_idx: int | None = None) -> Tuple[Tensor, Tensor]:
         out, weights = self.block_res(self._current_state(state))
-        state.stats.add(weights)
+        state.stats.add(weights, layer_idx)
         return out, weights
 
-    def before_mlp(self, state: BlockAttnResState) -> Tuple[Tensor, Tensor]:
+    def before_mlp(self, state: BlockAttnResState, layer_idx: int | None = None) -> Tuple[Tensor, Tensor]:
         out, weights = self.block_res(self._current_state(state))
-        state.stats.add(weights)
+        state.stats.add(weights, layer_idx)
         return out, weights
 
     @staticmethod
