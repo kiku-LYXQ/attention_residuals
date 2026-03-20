@@ -27,6 +27,7 @@
 │   ├── seed.py         # 随机数/设备种子设置
 │   ├── logging_utils.py# 简单的 logging 配置
 │   └── metrics.py      # hidden norm、grad norm、depth attention mean
+├── attnres_hf_patch/    # 聚合 Hugging Face Llama AttnRes 模块
 ├── tests/              # PyTorch 单元测试（shape/attention/block checks）
 ├── train.py            # Toy 训练脚本（baseline/full/block），打印 loss + depth attention mean
 ├── evaluate.py         # 评估脚本，输出 hidden/grad norm 与 depth attention mean
@@ -100,3 +101,16 @@ pytest tests
 - 目前仅提供 toy dataset，真实语料需要自行替换 `dataset.text_file` 或 custom DataLoader。
 - 未实现论文中提到的 pipeline parallel / two-phase kernel 优化，仅在代码注释中预留扩展点。
 - Block Attention Residual 中的 `block_size` 表示每 block 的 layer 数，不含跨分布式缓存。
+
+## Hugging Face Llama AttnRes Patch
+1. 新增子模块 `attnres_hf_patch/`，其中：
+   - `attnres_state.py` 定义 `FullAttnResState` 和 `BlockAttnResState`；
+   - `attnres_adapter.py` 复用 `models/attnres.py` 的聚合算子；
+   - `modeling_llama_attnres.py` 复制并修改 Hugging Face `LlamaDecoderLayer` 和 `LlamaModel`，在 attention/MLP 前插入 depth-wise residual 聚合；
+   - `config.py` 提供 `HfAttnResMode` 枚举。
+2. `train.py` 支持 `--model_type` 参数：
+   - `baseline_llama`：原始 Llama；
+   - `full_attnres_llama`：Full Attention Residuals；
+   - `block_attnres_llama`：Block Attention Residuals；
+   通过 CLI 传 `--model_type full_attnres_llama` 便可在 HF 版本上运行实验。
+3. 新增 `tests/test_hf_attnres.py` 验证 HF patch（shape、depth softmax、embedding 历史、block 状态、backward）。

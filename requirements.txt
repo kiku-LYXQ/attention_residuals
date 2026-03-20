@@ -2,3 +2,4 @@ torch>=2.0.0
 pyyaml
 pytest
 numpy
+transformers>=5.0.0

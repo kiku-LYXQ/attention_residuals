@@ -8,6 +8,7 @@ from typing import Dict
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
+from transformers import LlamaConfig, LlamaForCausalLM, LlamaModel
 
 from models.transformer import (
     BaselineTransformer,
@@ -17,6 +18,9 @@ from models.transformer import (
 from utils.logging_utils import configure_logging
 from utils.metrics import depth_attention_mean
 from utils.seed import set_seed
+
+from attnres_hf_patch.config import HfAttnResMode
+from attnres_hf_patch.modeling_llama_attnres import AttnResLlamaModelBase, HfAttnResCausalLM
 
 
 class ToyTokenDataset(Dataset):
@@ -51,8 +55,23 @@ def load_config(path: pathlib.Path) -> Dict:
         return yaml.safe_load(fp)
 
 
-def build_model(model_config: Dict) -> torch.nn.Module:
-    mode = model_config["mode"]
+def _build_llama_config(model_config: Dict) -> LlamaConfig:
+    return LlamaConfig(
+        vocab_size=model_config["vocab_size"],
+        hidden_size=model_config["embed_dim"],
+        intermediate_size=model_config["mlp_dim"],
+        num_attention_heads=model_config["num_heads"],
+        num_hidden_layers=model_config["num_layers"],
+        max_position_embeddings=model_config["max_len"],
+        rms_norm_eps=1e-6,
+        pad_token_id=0,
+        bos_token_id=0,
+        eos_token_id=0,
+    )
+
+
+def build_model(model_config: Dict, model_type: str | None = None) -> torch.nn.Module:
+    mode = model_type or model_config["mode"]
     common = dict(
         vocab_size=model_config["vocab_size"],
         max_len=model_config["max_len"],
@@ -69,16 +88,32 @@ def build_model(model_config: Dict) -> torch.nn.Module:
             return FullAttnResTransformer(**common)
         case "block_attnres":
             return BlockAttnResTransformer(block_size=model_config.get("block_size", 2), **common)
+        case "baseline_llama":
+            return LlamaForCausalLM(_build_llama_config(model_config))
+        case "full_attnres_llama":
+            base = AttnResLlamaModelBase(
+                _build_llama_config(model_config),
+                mode=HfAttnResMode.FULL,
+                block_size=model_config.get("block_size", 2),
+            )
+            return HfAttnResCausalLM(base, vocab_size=model_config["vocab_size"])
+        case "block_attnres_llama":
+            base = AttnResLlamaModelBase(
+                _build_llama_config(model_config),
+                mode=HfAttnResMode.BLOCK,
+                block_size=model_config.get("block_size", 2),
+            )
+            return HfAttnResCausalLM(base, vocab_size=model_config["vocab_size"])
         case _:
             raise ValueError(f"Unknown model mode {mode}")
 
 
-def train(config_path: pathlib.Path) -> None:
+def train(config_path: pathlib.Path, model_type: str | None = None) -> None:
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
     configure_logging(config.get("log_level", logging.INFO))
     device = torch.device(config.get("device", "cpu"))
-    model = build_model(config["model"]).to(device)
+    model = build_model(config["model"], model_type).to(device)
     lr = float(config.get("lr", 5e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     dataset_file = config.get("dataset", {}).get("text_file")
@@ -101,7 +136,21 @@ def train(config_path: pathlib.Path) -> None:
             batch = next(loader_iter)
         batch = batch.to(device)
         optimizer.zero_grad()
-        logits, stats = model(batch, return_depth_weights=True)
+        try:
+            outputs = model(batch, return_depth_weights=True)
+        except TypeError:
+            outputs = model(batch)
+        if isinstance(outputs, tuple):
+            logits, stats = outputs
+        elif hasattr(outputs, "logits"):
+            logits = outputs.logits
+            stats = {}
+        elif hasattr(outputs, "last_hidden_state"):
+            logits = outputs.last_hidden_state
+            stats = {}
+        else:
+            logits = outputs
+            stats = {}
         shift_logits = logits[:, :-1, :].contiguous()
         targets = batch[:, 1:].contiguous()
         loss = criterion(shift_logits.view(-1, shift_logits.size(-1)), targets.view(-1))
@@ -121,8 +170,22 @@ def train(config_path: pathlib.Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser("attnres-train")
     parser.add_argument("config", type=pathlib.Path, help="Path to YAML configuration")
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        choices=[
+            "baseline",
+            "full_attnres",
+            "block_attnres",
+            "baseline_llama",
+            "full_attnres_llama",
+            "block_attnres_llama",
+        ],
+        default=None,
+        help="Model type override",
+    )
     args = parser.parse_args()
-    train(args.config)
+    train(args.config, args.model_type)
 
 
 if __name__ == "__main__":
