@@ -104,13 +104,13 @@ pytest tests
 
 ## Hugging Face Llama AttnRes Patch
 1. 新增子模块 `attnres_hf_patch/`，其中：
-   - `attnres_state.py` 定义 `FullAttnResState` 和 `BlockAttnResState`；
-   - `attnres_adapter.py` 复用 `models/attnres.py` 的聚合算子；
-   - `modeling_llama_attnres.py` 复制并修改 Hugging Face `LlamaDecoderLayer` 和 `LlamaModel`，在 attention/MLP 前插入 depth-wise residual 聚合；
+   - `attnres_state.py` 定义 `FullAttnResState`、`BlockAttnResState` 以及 `AttnResStats`（记录 `depth_mean`/`depth_entropy`/`attn_depth_weights`）;
+   - `attnres_adapter.py` 复用 `models/attnres.py` 的聚合算子，并在 attention/MLP 前把深度 attention 权重交给 stats；
+   - `modeling_llama_attnres.py` 复制并修改 Hugging Face `LlamaDecoderLayer` 和 `LlamaModel`，在 attention/MLP 前插入 depth-wise residual 聚合，并在 `AttnResLlamaModelBase`/`HfAttnResCausalLM` 中可选输出 stats；
    - `config.py` 提供 `HfAttnResMode` 枚举。
 2. `train.py` 支持 `--model_type` 参数：
    - `baseline_llama`：原始 Llama；
-   - `full_attnres_llama`：Full Attention Residuals；
-   - `block_attnres_llama`：Block Attention Residuals；
-   通过 CLI 传 `--model_type full_attnres_llama` 便可在 HF 版本上运行实验。
-3. 新增 `tests/test_hf_attnres.py` 验证 HF patch（shape、depth softmax、embedding 历史、block 状态、backward）。
+   - `full_attnres_llama`：Full Attention Residuals（统计 `depth_mean`/`depth_entropy`）；
+   - `block_attnres_llama`：Block Attention Residuals（同样输出 stats）；
+   通过 CLI 传 `--model_type full_attnres_llama` 便可在 HF 版本上运行实验，训练日志自动打印 `depth_mean`（依赖 HF stats）并继续支持 `depth_attention_mean` 的多层合并。
+3. 新增 `tests/test_hf_attnres.py` 验证 HF patch（shape、depth softmax、embedding 历史、block 状态、stat 统计、backward）。
