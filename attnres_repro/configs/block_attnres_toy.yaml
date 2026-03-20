@@ -1,0 +1,20 @@
+model:
+  mode: block_attnres
+  vocab_size: 128
+  max_len: 64
+  num_layers: 4
+  embed_dim: 64
+  num_heads: 4
+  mlp_dim: 256
+  block_size: 2
+  dropout: 0.1
+trainer:
+  seq_len: 32
+  batch_size: 6
+  steps: 20
+  dataset_size: 320
+lr: 5e-4
+seed: 42
+device: cpu
+dataset:
+  text_file: ""

@@ -1,0 +1,19 @@
+model:
+  mode: baseline
+  vocab_size: 128
+  max_len: 64
+  num_layers: 2
+  embed_dim: 64
+  num_heads: 4
+  mlp_dim: 256
+  dropout: 0.1
+trainer:
+  seq_len: 32
+  batch_size: 8
+  steps: 20
+  dataset_size: 256
+lr: 5e-4
+seed: 42
+device: cpu
+dataset:
+  text_file: ""
