@@ -117,6 +117,11 @@ pytest tests
 3. `configs/` 下带 `_smoke` 或 `_formal_small` 的 YAML 继续服务于本地快速验证，`*_paper16.yaml` 则是真正的 16 层、CUDA、seq_len=512 配置，且统一指向 `cache/qwen_wikitext103_*_tokens.pt`。
 4. 在正式训练前可先跑 `*_smoke.yaml` 配置验证 pipeline，再在 GPU 上运行 `*_paper16.yaml` 以完成论文级实验。
 
+## OpenWebText2 大语料准备
+1. 脚本 `scripts/download_openwebtext2.py` 使用 `datasets.load_dataset("openwebtext2")` 拉取 OpenWebText2，默认参数 `--limit 1000` 只会写入每个 split 的前 1,000 条；要下载完整语料（几十 GB）可以将 `--limit` 设为数据总大小或直接删掉 slicing，如 `python scripts/download_openwebtext2.py --limit 200000 --hf_token $HF_TOKEN`。该脚本会写入 `data/openwebtext2/train.txt` 和 `data/openwebtext2/validation.txt`，每行自动去换行符并分割为一句。
+2. 仍然使用 `scripts/prepare_text_dataset.py --tokenizer_name Qwen/Qwen2-0.5B --text_file data/openwebtext2/<split>.txt --output_path cache/qwen_openwebtext2_<split>_tokens.pt` 来生成 cache；提示：如果下载大语料时需要 HF_TOKEN，请设置 `--hf_token` 或环境变量；本地测试可在 `--limit 2000` 继续验证 pipeline。
+3. 生成的 `cache/qwen_openwebtext2_<split>_tokens.pt` 可直接在 `*_paper16.yaml` 配置里替换 `train_tokens_path`/`val_tokens_path`，train.py 会自动加载 tokenizer、对齐 vocab_size，并跑 validation。
+
 ## 已知简化与差异
 - 目前仅提供 toy dataset，真实语料需要自行替换 `dataset.text_file` 或 custom DataLoader。
 - 未实现论文中提到的 pipeline parallel / two-phase kernel 优化，仅在代码注释中预留扩展点。
