@@ -5,10 +5,11 @@ import logging
 import pathlib
 from typing import Any, Dict
 
+import math
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
-from transformers import LlamaConfig, LlamaForCausalLM, LlamaModel
+from transformers import AutoTokenizer, LlamaConfig, LlamaForCausalLM, LlamaModel
 
 from models.transformer import (
     BaselineTransformer,
@@ -21,6 +22,7 @@ from utils.seed import set_seed
 
 from attnres_hf_patch.config import HfAttnResMode
 from attnres_hf_patch.modeling_llama_attnres import AttnResLlamaModelBase, HfAttnResCausalLM
+from utils.data import TokenSequenceDataset
 
 
 class ToyTokenDataset(Dataset):
@@ -121,21 +123,42 @@ def train(
     configure_logging(config.get("log_level", logging.INFO))
     device = torch.device(config.get("device", "cpu"))
     model_mode = model_type or config["model"]["mode"]
+    dataset_cfg = config.get("dataset", {})
+    seq_len = config["trainer"]["seq_len"]
+    batch_size = config["trainer"]["batch_size"]
+    train_tokens_path = dataset_cfg.get("train_tokens_path")
+    val_tokens_path = dataset_cfg.get("val_tokens_path")
+    tokenizer_name = dataset_cfg.get("tokenizer_name")
+    formal_mode = bool(train_tokens_path and val_tokens_path and tokenizer_name)
+    train_loader: DataLoader
+    val_loader: DataLoader | None = None
+    if formal_mode:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        config["model"]["vocab_size"] = tokenizer.vocab_size
+        train_tokens = torch.load(train_tokens_path)
+        val_tokens = torch.load(val_tokens_path)
+        train_dataset = TokenSequenceDataset(train_tokens, seq_len)
+        val_dataset = TokenSequenceDataset(val_tokens, seq_len)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    else:
+        dataset_file = dataset_cfg.get("text_file")
+        dataset = ToyTokenDataset(
+            seq_len=seq_len,
+            vocab_size=config["model"]["vocab_size"],
+            size=config["trainer"]["dataset_size"],
+            text_file=pathlib.Path(dataset_file) if dataset_file else None,
+        )
+        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     model = build_model(config["model"], model_type).to(device)
     lr = float(config.get("lr", 5e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    dataset_file = config.get("dataset", {}).get("text_file")
-    dataset = ToyTokenDataset(
-        seq_len=config["trainer"]["seq_len"],
-        vocab_size=config["model"]["vocab_size"],
-        size=config["trainer"]["dataset_size"],
-        text_file=pathlib.Path(dataset_file) if dataset_file else None,
-    )
-    loader = DataLoader(dataset, batch_size=config["trainer"]["batch_size"], shuffle=True)
     criterion = torch.nn.CrossEntropyLoss()
     logging.info("Starting training for %d steps", config["trainer"]["steps"])
     total_steps = config["trainer"]["steps"]
-    loader_iter = iter(loader)
+    loader_iter = iter(train_loader)
     wandb_run = None
     wandb_module: Any | None = None
     if wandb_mode != "disabled":
@@ -161,16 +184,12 @@ def train(
         except Exception as exc:
             logging.warning("W&B initialization failed (%s), continuing without W&B", exc)
             wandb_run = None
-    for step in range(1, total_steps + 1):
+    eval_every = config["trainer"].get("eval_every")
+    eval_batches = config["trainer"].get("eval_batches")
+
+    def run_forward(batch: torch.Tensor, return_depth_weights: bool) -> tuple[torch.Tensor, dict]:
         try:
-            batch = next(loader_iter)
-        except StopIteration:
-            loader_iter = iter(loader)
-            batch = next(loader_iter)
-        batch = batch.to(device)
-        optimizer.zero_grad()
-        try:
-            outputs = model(batch, return_depth_weights=True)
+            outputs = model(batch, return_depth_weights=return_depth_weights)
         except TypeError:
             outputs = model(batch)
         if isinstance(outputs, tuple):
@@ -184,6 +203,40 @@ def train(
         else:
             logits = outputs
             stats = {}
+        return logits, stats
+
+    def evaluate(
+        loader: DataLoader,
+        criterion: torch.nn.modules.loss._Loss,
+        device: torch.device,
+        max_batches: int | None,
+    ) -> float | None:
+        model.eval()
+        losses: list[float] = []
+        with torch.no_grad():
+            for batch_idx, val_batch in enumerate(loader):
+                if max_batches and batch_idx >= max_batches:
+                    break
+                val_batch = val_batch.to(device)
+                logits, _ = run_forward(val_batch, return_depth_weights=False)
+                shift_logits = logits[:, :-1, :].contiguous()
+                targets = val_batch[:, 1:].contiguous()
+                loss = criterion(shift_logits.view(-1, shift_logits.size(-1)), targets.view(-1))
+                losses.append(loss.item())
+        model.train()
+        if not losses:
+            return None
+        return sum(losses) / len(losses)
+
+    for step in range(1, total_steps + 1):
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            loader_iter = iter(train_loader)
+            batch = next(loader_iter)
+        batch = batch.to(device)
+        optimizer.zero_grad()
+        logits, stats = run_forward(batch, return_depth_weights=True)
         shift_logits = logits[:, :-1, :].contiguous()
         targets = batch[:, 1:].contiguous()
         loss = criterion(shift_logits.view(-1, shift_logits.size(-1)), targets.view(-1))
@@ -228,6 +281,18 @@ def train(
             for layer_idx, entropy_val in per_layer.get("entropies", {}).items():
                 metrics[f"train/depth_entropy_layer_{layer_idx}"] = entropy_val
             wandb_run.log(metrics, step=step)
+        if val_loader and eval_every and eval_every > 0 and step % eval_every == 0:
+            val_loss = evaluate(val_loader, criterion, device, eval_batches)
+            if val_loss is not None:
+                val_ppl = math.exp(val_loss)
+                logging.info(
+                    "step=%d val_loss=%.4f val_ppl=%.4f",
+                    step,
+                    val_loss,
+                    val_ppl,
+                )
+                if wandb_run:
+                    wandb_run.log({"val/loss": val_loss, "val/ppl": val_ppl}, step=step)
     if wandb_run:
         wandb_run.finish()
 

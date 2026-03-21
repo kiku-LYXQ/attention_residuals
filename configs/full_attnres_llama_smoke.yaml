@@ -1,0 +1,23 @@
+seed: 42
+model:
+  mode: full_attnres_llama
+  vocab_size: 32000
+  num_layers: 2
+  embed_dim: 128
+  num_heads: 4
+  mlp_dim: 512
+  max_len: 64
+trainer:
+  seq_len: 16
+  batch_size: 2
+  steps: 4
+  eval_every: 2
+  eval_batches: 1
+  device: cpu
+  dataset_size: 100
+dataset:
+  train_tokens_path: /tmp/attnres_train_tokens.pt
+  val_tokens_path: /tmp/attnres_val_tokens.pt
+  tokenizer_name: Qwen/Qwen2-0.5B
+logging:
+  wandb_project: attention_residuals
