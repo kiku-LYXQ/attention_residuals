@@ -111,6 +111,12 @@ pytest tests
 3. 训练脚本可直接替换为更大数据集：只需修改 `ToyTokenDataset` 中的 `text_file` 或 dataset loader。
 4. 后续可在 Transformer 外层包装 Pipeline Parallel / Flash Attention 插件，只要保留 `DepthAttnResidual` 和 `BlockDepthAttnResidual` 的接口即可。
 
+## WikiText-103 & paper16 准备流程
+1. 运行 `scripts/download_wikitext103.py --limit N`（N 代表每个 split 保留的行数）从 Hugging Face datasets 里抓取 WikiText-103 的 train/validation，对原始行做简单清洗并写入 `data/wikitext103/train.txt`、`data/wikitext103/validation.txt`。
+2. 使用 `scripts/prepare_text_dataset.py --tokenizer_name Qwen/Qwen2-0.5B --text_file data/wikitext103/<split>.txt --output_path cache/qwen_wikitext103_<split>_tokens.pt` 生成 1D token cache；文件名已包含 tokenizer/split 信息，可直接在 config 中引用。
+3. `configs/` 下带 `_smoke` 或 `_formal_small` 的 YAML 继续服务于本地快速验证，`*_paper16.yaml` 则是真正的 16 层、CUDA、seq_len=512 配置，且统一指向 `cache/qwen_wikitext103_*_tokens.pt`。
+4. 在正式训练前可先跑 `*_smoke.yaml` 配置验证 pipeline，再在 GPU 上运行 `*_paper16.yaml` 以完成论文级实验。
+
 ## 已知简化与差异
 - 目前仅提供 toy dataset，真实语料需要自行替换 `dataset.text_file` 或 custom DataLoader。
 - 未实现论文中提到的 pipeline parallel / two-phase kernel 优化，仅在代码注释中预留扩展点。

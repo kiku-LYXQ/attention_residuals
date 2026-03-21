@@ -5,3 +5,4 @@ numpy
 transformers>=5.0.0
 wandb>=0.15.0
 tokenizers>=0.13.3
+datasets>=2.15.0
