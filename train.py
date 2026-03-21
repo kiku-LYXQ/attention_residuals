@@ -9,7 +9,7 @@ import math
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, LlamaConfig, LlamaForCausalLM, LlamaModel
+from transformers import AutoTokenizer, LlamaConfig, LlamaForCausalLM, LlamaModel, get_cosine_schedule_with_warmup
 
 from models.transformer import (
     BaselineTransformer,
@@ -156,10 +156,18 @@ def train(
         train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     model = build_model(config["model"], model_type).to(device)
     lr = float(config.get("trainer", {}).get("lr", 5e-4))
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    weight_decay = float(config.get("trainer", {}).get("weight_decay", 0.01))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = torch.nn.CrossEntropyLoss()
     logging.info("Starting training for %d steps", config["trainer"]["steps"])
     total_steps = config["trainer"]["steps"]
+    warmup_ratio = float(config["trainer"].get("warmup_ratio", 0.1))
+    warmup_steps = int(total_steps * warmup_ratio)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=total_steps,
+    )
     loader_iter = iter(train_loader)
     wandb_run = None
     wandb_module: Any | None = None
@@ -243,7 +251,9 @@ def train(
         targets = batch[:, 1:].contiguous()
         loss = criterion(shift_logits.view(-1, shift_logits.size(-1)), targets.view(-1))
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(config["trainer"].get("max_grad_norm", 1.0)))  # gradient clipping
         optimizer.step()
+        scheduler.step()
         depth_mean = None
         depth_entropy = None
         attn_weights = None
