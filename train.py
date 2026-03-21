@@ -120,7 +120,7 @@ def train(
 ) -> None:
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
-    configure_logging(config.get("log_level", logging.INFO))
+    configure_logging(config.get("logging", {}).get("log_level", logging.INFO))
     device_str = config.get("trainer", {}).get("device", "cpu")
     device = torch.device(device_str)
     model_mode = model_type or config["model"]["mode"]
@@ -146,15 +146,16 @@ def train(
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     else:
         dataset_file = dataset_cfg.get("text_file")
+        dataset_size = config["trainer"].get("dataset_size", seq_len * batch_size)
         dataset = ToyTokenDataset(
             seq_len=seq_len,
             vocab_size=config["model"]["vocab_size"],
-            size=config["trainer"]["dataset_size"],
+            size=dataset_size,
             text_file=pathlib.Path(dataset_file) if dataset_file else None,
         )
         train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     model = build_model(config["model"], model_type).to(device)
-    lr = float(config.get("lr", 5e-4))
+    lr = float(config.get("trainer", {}).get("lr", 5e-4))
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
     logging.info("Starting training for %d steps", config["trainer"]["steps"])
