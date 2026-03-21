@@ -6,8 +6,9 @@ from pathlib import Path
 from datasets import load_dataset
 
 
-def write_split(split: str, output: Path, limit: int, token: str | None) -> None:
-    dataset = load_dataset("openwebtext2", split=f"{split}[:{limit}]", use_auth_token=token)
+def write_split(split: str, output: Path, limit: int | None, token: str | None) -> None:
+    slice_expr = f"{split}[:{limit}]" if limit is not None else split
+    dataset = load_dataset("openwebtext2", split=slice_expr, use_auth_token=token)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as fp:
         for entry in dataset:
@@ -19,7 +20,7 @@ def write_split(split: str, output: Path, limit: int, token: str | None) -> None
 
 def main() -> None:
     parser = argparse.ArgumentParser("download-openwebtext2")
-    parser.add_argument("--limit", type=int, default=1000, help="Number of lines per split")
+    parser.add_argument("--limit", type=int, default=1000, nargs="?", help="Number of lines per split (omit to download full split)")
     parser.add_argument(
         "--output_dir",
         type=Path,
