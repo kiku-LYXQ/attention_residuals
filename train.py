@@ -121,7 +121,8 @@ def train(
     config = load_config(config_path)
     set_seed(config.get("seed", 42))
     configure_logging(config.get("log_level", logging.INFO))
-    device = torch.device(config.get("device", "cpu"))
+    device_str = config.get("trainer", {}).get("device", "cpu")
+    device = torch.device(device_str)
     model_mode = model_type or config["model"]["mode"]
     dataset_cfg = config.get("dataset", {})
     seq_len = config["trainer"]["seq_len"]
