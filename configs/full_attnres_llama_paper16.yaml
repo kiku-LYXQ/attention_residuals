@@ -18,7 +18,7 @@ trainer:
   weight_decay: 0.01
   warmup_ratio: 0.1
   max_grad_norm: 1.0
-  dataset:
+dataset:
   train_tokens_path: cache/qwen_wikitext103_train_tokens.pt
   val_tokens_path: cache/qwen_wikitext103_val_tokens.pt
   tokenizer_name: Qwen/Qwen2-0.5B
