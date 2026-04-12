@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import pathlib
+import tempfile
 from typing import Any, Dict
 
 import math
@@ -19,6 +20,11 @@ from models.transformer import (
 from utils.logging_utils import configure_logging
 from utils.metrics import depth_attention_mean
 from utils.seed import set_seed
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover - optional dependency
+    SummaryWriter = None
 
 from attnres_hf_patch.config import HfAttnResMode
 from attnres_hf_patch.modeling_llama_attnres import AttnResLlamaModelBase, HfAttnResCausalLM
@@ -110,6 +116,33 @@ def build_model(model_config: Dict, model_type: str | None = None) -> torch.nn.M
             raise ValueError(f"Unknown model mode {mode}")
 
 
+def build_attnres_log_metrics(stats: dict | None) -> dict[str, float]:
+    if not stats:
+        return {}
+    metrics: dict[str, float] = {}
+    if "attnres_weight_max" in stats:
+        metrics["attnres/weight_max"] = float(stats["attnres_weight_max"])
+    if "attnres_weight_top1_mean" in stats:
+        metrics["attnres/weight_top1_mean"] = float(stats["attnres_weight_top1_mean"])
+    per_layer = stats.get("per_layer", {})
+    for layer_idx, value in per_layer.get("weight_max", {}).items():
+        metrics[f"attnres/weight_max_layer_{layer_idx}"] = float(value)
+    for layer_idx, value in per_layer.get("weight_top1_mean", {}).items():
+        metrics[f"attnres/weight_top1_mean_layer_{layer_idx}"] = float(value)
+    return metrics
+
+
+def _make_tensorboard_writer(config: Dict, config_path: pathlib.Path) -> Any | None:
+    if SummaryWriter is None:
+        return None
+    trainer_cfg = config.get("trainer", {})
+    log_dir = trainer_cfg.get("tensorboard_log_dir")
+    if log_dir is None:
+        run_name = trainer_cfg.get("tensorboard_run_name") or config_path.stem
+        log_dir = str(pathlib.Path(tempfile.gettempdir()) / "attention_residuals_tb" / run_name)
+    return SummaryWriter(log_dir=log_dir)
+
+
 def train(
     config_path: pathlib.Path,
     model_type: str | None = None,
@@ -194,6 +227,7 @@ def train(
         except Exception as exc:
             logging.warning("W&B initialization failed (%s), continuing without W&B", exc)
             wandb_run = None
+    tensorboard_writer = _make_tensorboard_writer(config, config_path)
     eval_every = config["trainer"].get("eval_every")
     eval_batches = config["trainer"].get("eval_batches")
 
@@ -264,12 +298,28 @@ def train(
             per_layer = stats.get("per_layer", per_layer)
             if attn_weights:
                 depth_mean = depth_attention_mean(attn_weights).mean().item()
+        attnres_metrics = build_attnres_log_metrics(stats)
         logging.info(
-            "step=%d loss=%.4f depth_mean=%.4f",
+            "step=%d loss=%.4f depth_mean=%.4f attnres_weight_max=%.4f attnres_weight_top1_mean=%.4f",
             step,
             loss.item(),
             depth_mean if depth_mean is not None else 0.0,
+            attnres_metrics.get("attnres/weight_max", 0.0),
+            attnres_metrics.get("attnres/weight_top1_mean", 0.0),
         )
+        if tensorboard_writer:
+            tensorboard_writer.add_scalar("train/loss", float(loss.item()), step)
+            tensorboard_writer.add_scalar("train/learning_rate", float(optimizer.param_groups[0]["lr"]), step)
+            if depth_mean is not None:
+                tensorboard_writer.add_scalar("train/depth_mean", float(depth_mean), step)
+            if depth_entropy is not None:
+                tensorboard_writer.add_scalar("train/depth_entropy", float(depth_entropy), step)
+            for key, value in attnres_metrics.items():
+                tensorboard_writer.add_scalar(key, float(value), step)
+            for layer_idx, mean_val in per_layer.get("means", {}).items():
+                tensorboard_writer.add_scalar(f"train/depth_mean_layer_{layer_idx}", float(mean_val), step)
+            for layer_idx, entropy_val in per_layer.get("entropies", {}).items():
+                tensorboard_writer.add_scalar(f"train/depth_entropy_layer_{layer_idx}", float(entropy_val), step)
         if wandb_run:
             metrics = {
                 "train/loss": loss.item(),
@@ -292,6 +342,7 @@ def train(
                 metrics[f"train/depth_mean_layer_{layer_idx}"] = mean_val
             for layer_idx, entropy_val in per_layer.get("entropies", {}).items():
                 metrics[f"train/depth_entropy_layer_{layer_idx}"] = entropy_val
+            metrics.update(attnres_metrics)
             wandb_run.log(metrics, step=step)
         if val_loader and eval_every and eval_every > 0 and step % eval_every == 0:
             val_loss = evaluate(val_loader, criterion, device, eval_batches)
@@ -305,6 +356,11 @@ def train(
                 )
                 if wandb_run:
                     wandb_run.log({"val/loss": val_loss, "val/ppl": val_ppl}, step=step)
+                if tensorboard_writer:
+                    tensorboard_writer.add_scalar("val/loss", float(val_loss), step)
+                    tensorboard_writer.add_scalar("val/ppl", float(val_ppl), step)
+    if tensorboard_writer:
+        tensorboard_writer.close()
     if wandb_run:
         wandb_run.finish()
 

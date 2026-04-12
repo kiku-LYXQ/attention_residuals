@@ -37,6 +37,9 @@ def test_full_attnres_stats():
     assert isinstance(stats, dict)
     assert stats["depth_mean"] > 0
     assert stats["depth_entropy"] > 0
+    assert "attnres_weight_max" in stats
+    assert "attnres_weight_top1_mean" in stats
+    assert len(stats["attnres_weight_max_values"]) == len(stats["attnres_weight_top1_mean_values"])
 
 
 def test_full_adapter_softmax():
